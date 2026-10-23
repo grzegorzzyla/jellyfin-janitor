@@ -6,6 +6,6 @@ RUN apt-get update -qq \
     | tar -xz -C /usr/local/bin \
  && rm -rf /var/lib/apt/lists/* \
  && dovi_tool --version && mkvmerge --version
-COPY app.py index.html /app/
+COPY *.py index.html /app/
 EXPOSE 8080
 CMD ["python3", "-u", "/app/app.py"]

@@ -1,7 +1,7 @@
 # Sekrety i lokalne dane
 config.json
-dovi-web/.env
-dovi-web/data/
+web/.env
+web/data/
 historia/
 NOTATKI.md
 *.json.bak

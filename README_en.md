@@ -6,9 +6,9 @@ Tools for cleaning up a [Jellyfin](https://jellyfin.org) library through its API
 
 - **finding duplicate movies** (SD/720p next to a 1080p+ copy) and removing them safely,
 - **fixing misidentified movies** (assigning the correct TMDB id),
-- **dovi-web** – a small browser UI that converts **Dolby Vision profile 7 → 8.1** without re-encoding, so UHD Blu-ray remuxes play on TVs and streaming boxes.
+- **Dolby Vision profile 7 → 8.1 conversion** without re-encoding, so UHD Blu-ray remuxes play on TVs and streaming boxes.
 
-The Python scripts use only the standard library (Python 3.9+), so there is nothing to install. dovi-web runs in Docker.
+Everything is available in a **browser UI** (`web/`, Docker) and as Python scripts that use only the standard library (Python 3.9+), so there is nothing to install.
 
 > The UI, console output and code comments are in Polish.
 
@@ -19,11 +19,40 @@ The Python scripts use only the standard library (Python 3.9+), so there is noth
 | `find_dupes.py [list.json]` | Duplicate report. Read-only. Optionally saves the lower-quality versions to a list for deletion. |
 | `delete_items.py list.json` | Deletes the items on the list (library entry **and the file on disk**). Shows the list first and asks you to type `tak` ("yes"). |
 | `identify.py <item_id> <tmdb_id>` | Assigns the correct TMDB id to a movie and fetches its metadata. |
-| `dovi-web/` | Browser UI for DV profile 7 → 8.1 conversion (Docker). |
-| `dv7_to_p81.sh <file.mkv>` | Same as dovi-web, but from the command line on the server that holds the files. |
+| `web/` | Browser UI: Dolby Vision, duplicates, identification (Docker). |
+| `dv7_to_p81.sh <file.mkv>` | DV conversion from the command line on the server that holds the files. |
 | `jellyfin.py` | Shared API client used by the scripts. |
 
-## Setup
+## Browser UI (`web/`)
+
+Three tabs:
+
+- **Dolby Vision** – list of DV profile 7 files, conversion to 8.1 with a queue and progress, replacing the original ([details below](#dolby-vision-profile-7--81)).
+- **Duplikaty** (Duplicates) – groups of movies with several versions.
+  - Lower-quality versions (below 1080p next to HD) and identical copies are pre-selected, and you can change the selection.
+  - The UI won't let you delete every version of a movie, or merged versions.
+  - It warns when deleting a file would also delete its whole folder.
+- **Rozpoznanie** (Identification) – movies that may be misidentified: the year in the file name differs from Jellyfin's, or versions have different runtimes. Movies without a TMDB/IMDb id are listed separately. You can search TMDB for any movie (with posters) and assign the result in one click.
+
+### Installation
+
+On the server that holds the media files (e.g. a NAS with Docker):
+
+```
+cd web
+cp .env.example .env    # Jellyfin URL, API key, MEDIA_DIR
+docker compose up -d --build
+```
+
+`MEDIA_DIR` is the host folder that your Jellyfin container mounts as `/media`. The UI mounts it at the same path, so the paths returned by the Jellyfin API match directly.
+
+If your Jellyfin uses a path other than `/media`, change `MEDIA` in `dv.py` and the mount in `compose.yaml`.
+
+UI: `http://<server>:8097`
+
+> ⚠️ The UI has no authentication and can delete files. Run it only on your home network and don't expose the port to the internet.
+
+## Script setup
 
 1. In Jellyfin: **Dashboard → API Keys → +**.
 2. Copy `config.example.json` to `config.json` and fill in the server address and the key.
@@ -63,7 +92,7 @@ python3 identify.py <item_id> <tmdb_id>
 
 A common cause of misidentification: Jellyfin identifies movies by folder name. For example, `Blade.Runner.2049…mkv` inside a `Blade Runner/` folder gets identified as the 1982 movie.
 
-## Dolby Vision profile 7 → 8.1 (dovi-web)
+## Dolby Vision profile 7 → 8.1
 
 **Problem:** UHD Blu-ray remuxes often use Dolby Vision **profile 7**. In Jellyfin it shows up as "Dolby Vision Profile 7.6", `DOVIWithEL`. This profile carries an enhancement layer (EL) that practically only Blu-ray players support. Google TV, webOS and Tizen TVs, streaming boxes and most apps show a black screen or wrong colours.
 
@@ -73,30 +102,12 @@ A common cause of misidentification: Jellyfin identifies movies by folder name. 
 - TVs with Dolby Vision play the result in DV, and other devices play it as plain HDR10.
 - Audio, subtitles and chapters are kept as they are.
 
-### Installation
-
-On the server that holds the media files (e.g. a NAS with Docker):
-
-```
-cd dovi-web
-cp .env.example .env    # Jellyfin URL, API key, MEDIA_DIR
-docker compose up -d --build
-```
-
-`MEDIA_DIR` is the host folder that your Jellyfin container mounts as `/media`. dovi-web mounts it at the same path, so the paths returned by the Jellyfin API match directly.
-
-If your Jellyfin uses a path other than `/media`, change `MEDIA` in `app.py` and the mount in `compose.yaml`.
-
-UI: `http://<server>:8097`
-
-### Usage
+### Usage (Dolby Vision tab)
 
 - The list of DV profile 7 files is fetched from Jellyfin automatically.
 - **Konwertuj** (Convert): `<name>.P8.mkv` is created next to the original, and Jellyfin refreshes the library. Several conversions go into a queue and run one at a time, with progress and a log.
 - **Podmień oryginał** (Replace original): use it after testing on your TV. The P8 file takes over the original's name, and the original is permanently deleted. Because the path stays the same, Jellyfin keeps the watch history, artwork and subtitles.
 - You need about **2.1× the file size** of free space: the working file plus the output.
-
-> ⚠️ The UI has no authentication, and "Replace original" deletes files. Run it only on your home network and don't expose the port to the internet.
 
 ### Without the UI: `dv7_to_p81.sh`
 

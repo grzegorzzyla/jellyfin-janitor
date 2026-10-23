@@ -1,9 +1,4 @@
-#!/usr/bin/env python3
-"""dovi-web: strona do konwersji Dolby Vision profil 7 -> 8.1 (bez przekodowania obrazu).
-
-Liste plikow bierze z Jellyfin (DvProfile == 7). Biblioteka jest zamontowana pod /media,
-tak samo jak w kontenerze Jellyfin, wiec sciezki z API pasuja 1:1.
-"""
+"""Konwersja Dolby Vision profil 7 -> 8.1 (bez przekodowania obrazu): kolejka, postep, podmiana oryginalu."""
 import json
 import os
 import re
@@ -12,30 +7,18 @@ import shutil
 import subprocess
 import threading
 import time
-import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-JF_URL = os.environ["JELLYFIN_URL"].rstrip("/")
-JF_KEY = os.environ["JELLYFIN_API_KEY"]
+import jf
+
 MEDIA = "/media"
-DATA = "/data"
+DATA = os.environ.get("DATA_DIR", "/data")
 HISTORY = os.path.join(DATA, "history.json")
 LOG = os.path.join(DATA, "current.log")
-PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 
 lock = threading.Lock()
 queue = []   # sciezki czekajace na konwersje
 job = None   # biezaca konwersja
 history = json.load(open(HISTORY)) if os.path.exists(HISTORY) else []
-_cache = {"t": 0, "items": []}
-
-
-def jf(method, path):
-    req = urllib.request.Request(JF_URL + path, method=method,
-                                 headers={"Authorization": f'MediaBrowser Token="{JF_KEY}"'})
-    with urllib.request.urlopen(req, timeout=120) as r:
-        raw = r.read()
-        return json.loads(raw) if raw else None
 
 
 def save_history():
@@ -47,20 +30,17 @@ def p8_path(path):
     return path[:-4] + ".P8.mkv"
 
 
-def dv7_items(force=False):
-    if force or time.time() - _cache["t"] > 60:
-        items = jf("GET", "/Items?IncludeItemTypes=Movie,Episode&Recursive=true&Fields=MediaSources")["Items"]
-        found = []
-        for it in items:
-            for src in it.get("MediaSources") or []:
-                v = next((s for s in src.get("MediaStreams", []) if s.get("Type") == "Video"), {})
-                if v.get("DvProfile") == 7 and (src.get("Path") or "").startswith(MEDIA + "/"):
-                    name = (it["SeriesName"] + " – " if it.get("SeriesName") else "") + it["Name"]
-                    found.append({"id": src["Id"], "name": name, "year": it.get("ProductionYear"),
-                                  "path": src["Path"], "size": src.get("Size") or 0,
-                                  "dv": v.get("VideoDoViTitle") or "Dolby Vision 7"})
-        _cache.update(t=time.time(), items=sorted(found, key=lambda i: i["name"].lower()))
-    return _cache["items"]
+def dv7_items():
+    found = []
+    for it in jf.items():
+        for src in it.get("MediaSources") or []:
+            v = jf.video_stream(src)
+            if v.get("DvProfile") == 7 and (src.get("Path") or "").startswith(MEDIA + "/"):
+                name = (it["SeriesName"] + " – " if it.get("SeriesName") else "") + it["Name"]
+                found.append({"id": src["Id"], "name": name, "year": it.get("ProductionYear"),
+                              "path": src["Path"], "size": src.get("Size") or 0,
+                              "dv": v.get("VideoDoViTitle") or "Dolby Vision 7"})
+    return sorted(found, key=lambda i: i["name"].lower())
 
 
 def convert(path):
@@ -126,7 +106,8 @@ def worker():
             job = None
         if ok:
             try:
-                jf("POST", "/Library/Refresh")
+                jf.request("POST", "/Library/Refresh")
+                jf.invalidate()
             except Exception:
                 pass
 
@@ -175,68 +156,35 @@ def state():
             "free_gb": round(shutil.disk_usage(MEDIA).free / 2**30)}
 
 
-def replace(item):
-    p = item["path"]
-    os.replace(p8_path(p), p)  # P8 przejmuje nazwe oryginalu, oryginal znika
-    history.insert(0, {"path": p, "status": "podmieniony", "msg": "oryginał zastąpiony wersją P8",
-                       "started": time.time(), "ended": time.time()})
-    save_history()
+def find(path):
+    return next((i for i in dv7_items() if i["path"] == path), None)
+
+
+def enqueue(path):
+    item = find(path)
+    if not item:
+        return "Tego pliku nie ma na liście DV profil 7"
+    with lock:
+        if (job and job["path"] == path) or path in queue or os.path.exists(p8_path(path)):
+            return "Plik jest już w kolejce albo ma wersję P8"
+        queue.append(path)
+
+
+def replace(path):
+    item = find(path)
+    if not item:
+        return "Tego pliku nie ma na liście DV profil 7"
+    with lock:
+        if (job and job["path"] == path) or path in queue or not os.path.exists(p8_path(path)):
+            return "Brak gotowej wersji P8"
+        os.replace(p8_path(path), path)  # P8 przejmuje nazwe oryginalu, oryginal znika
+        history.insert(0, {"path": path, "status": "podmieniony", "msg": "oryginał zastąpiony wersją P8",
+                           "started": time.time(), "ended": time.time()})
+        save_history()
     try:
-        jf("POST", f"/Items/{item['id']}/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=Default"
-                   "&replaceAllMetadata=false&replaceAllImages=false")
-        jf("POST", "/Library/Refresh")
+        jf.request("POST", f"/Items/{item['id']}/Refresh?metadataRefreshMode=FullRefresh&imageRefreshMode=Default"
+                           "&replaceAllMetadata=false&replaceAllImages=false")
+        jf.request("POST", "/Library/Refresh")
+        jf.invalidate()
     except Exception:
         pass
-
-
-class Handler(BaseHTTPRequestHandler):
-    def send(self, code, body, ctype="application/json; charset=utf-8"):
-        data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_GET(self):
-        if self.path == "/":
-            self.send(200, open(PAGE, "rb").read(), "text/html; charset=utf-8")
-        elif self.path == "/api/state":
-            try:
-                self.send(200, state())
-            except Exception as e:
-                self.send(502, {"error": f"Jellyfin: {e}"})
-        else:
-            self.send(404, {"error": "nie ma"})
-
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or "{}")
-        if self.path == "/api/refresh":
-            dv7_items(force=True)
-            return self.send(200, {"ok": True})
-        item = next((i for i in dv7_items() if i["path"] == body.get("path")), None)
-        if not item:
-            return self.send(400, {"error": "Tego pliku nie ma na liście DV profil 7"})
-        with lock:
-            busy = (job and job["path"] == item["path"]) or item["path"] in queue
-            if self.path == "/api/convert":
-                if busy or os.path.exists(p8_path(item["path"])):
-                    return self.send(409, {"error": "Plik jest już w kolejce albo ma wersję P8"})
-                queue.append(item["path"])
-                return self.send(200, {"ok": True})
-            if self.path == "/api/replace":
-                if busy or not os.path.exists(p8_path(item["path"])):
-                    return self.send(409, {"error": "Brak gotowej wersji P8"})
-                replace(item)
-                return self.send(200, {"ok": True})
-        self.send(404, {"error": "nie ma"})
-
-    def log_message(self, *args):
-        pass
-
-
-if __name__ == "__main__":
-    os.makedirs(DATA, exist_ok=True)
-    threading.Thread(target=worker, daemon=True).start()
-    print("dovi-web na porcie 8080", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()

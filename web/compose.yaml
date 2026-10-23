@@ -1,8 +1,8 @@
 services:
-  dovi-web:
+  jellyfin-janitor:
     build: .
-    image: dovi-web
-    container_name: dovi-web
+    image: jellyfin-janitor
+    container_name: jellyfin-janitor
     restart: unless-stopped
     ports:
       - "8097:8080"

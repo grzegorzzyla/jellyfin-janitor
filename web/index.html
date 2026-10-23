@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jellyfin Janitor</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#6b7280; --line:#e3e6eb; --accent:#4f46e5; --accent-soft:#eef0ff; --ok:#15803d; --err:#b91c1c; --warn:#b45309; --warn-soft:#fff7e6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111318; --card:#1a1d24; --fg:#e7e9ee; --muted:#9aa1ad; --line:#2a2f39; --accent:#818cf8; --accent-soft:#23264a; --ok:#4ade80; --err:#f87171; --warn:#fbbf24; --warn-soft:#2d2410; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 20px 16px 96px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 26px 0 10px; }
+  .sub { color: var(--muted); margin: 4px 0 0; }
+  .top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+  nav { display:flex; gap:4px; margin: 18px 0 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  nav a { padding: 9px 14px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; font-weight: 600; }
+  nav a.active { color: var(--accent); border-color: var(--accent); }
+  nav .count { font-size: 12px; background: var(--accent-soft); color: var(--accent); border-radius: 9px; padding: 1px 7px; margin-left: 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px 16px; margin-bottom: 12px; }
+  .card.pad { padding: 14px 16px; }
+  .row { display:flex; gap:12px; align-items:center; justify-content:space-between; padding: 12px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .row:first-child { border-top: 0; }
+  .grow { flex: 1 1 320px; min-width: 0; }
+  .name { font-weight: 600; }
+  .path { color: var(--muted); font-size: 12.5px; word-break: break-all; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .ghdr { display:flex; justify-content:space-between; align-items:center; gap: 8px; padding: 12px 0 4px; flex-wrap: wrap; }
+  .warnbox { background: var(--warn-soft); color: var(--warn); border-radius: 7px; padding: 6px 10px; font-size: 13px; margin: 4px 0 6px; }
+  button { font: inherit; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 7px; padding: 6px 14px; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--accent); }
+  button.small { padding: 3px 10px; font-size: 13px; }
+  button.danger { background: var(--err); border-color: var(--err); }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=text], input[type=search], input[type=number] { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--fg); min-width: 0; }
+  label.chk { display:flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+  label.chk input { margin-top: 4px; width: 17px; height: 17px; flex: none; }
+  .badge { display:inline-block; font-size: 12px; font-weight: 700; border-radius: 5px; padding: 1px 6px; background: var(--line); }
+  .b-4K, .b-1080p { background: var(--accent-soft); color: var(--accent); }
+  .b-SD, .b-720p { background: var(--warn-soft); color: var(--warn); }
+  .flag { font-size: 12px; color: var(--warn); font-weight: 600; margin-left: 6px; }
+  .tag { font-size: 13px; font-weight: 600; }
+  .ok { color: var(--ok); } .err { color: var(--err); } .warn { color: var(--warn); }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin: 10px 0 6px; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .5s; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; font-size: 12px; overflow-x: auto; margin: 8px 0 0; white-space: pre-wrap; word-break: break-all; }
+  .empty { color: var(--muted); padding: 12px 0; }
+  .toolbar { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; margin-bottom: 12px; }
+  .sticky { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line); padding: 12px 16px; }
+  .sticky > div { max-width: 1040px; margin: 0 auto; display:flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .fix { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 4px 0 12px; }
+  .fix .toolbar { margin: 0 0 8px; }
+  .result { display:flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); align-items: flex-start; }
+  .result:first-of-type { border-top: 0; }
+  .result img { width: 54px; height: 81px; object-fit: cover; border-radius: 4px; background: var(--line); flex: none; }
+  .result .grow { flex: 1; }
+  .ov { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  a { color: var(--accent); }
+  #error { color: var(--err); margin-top: 8px; min-height: 1em; }
+  [hidden] { display: none !important; }
+  summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div>
+      <h1>Jellyfin Janitor</h1>
+      <p class="sub">Porządki w bibliotece Jellyfin</p>
+    </div>
+    <button class="ghost" onclick="refreshAll()">Odśwież dane z Jellyfin</button>
+  </div>
+  <nav>
+    <a href="#dv" data-tab="dv">Dolby Vision<span class="count" id="c-dv" hidden></span></a>
+    <a href="#dupes" data-tab="dupes">Duplikaty<span class="count" id="c-dupes" hidden></span></a>
+    <a href="#identify" data-tab="identify">Rozpoznanie<span class="count" id="c-identify" hidden></span></a>
+  </nav>
+  <div id="error"></div>
+
+  <!-- Dolby Vision -->
+  <section id="tab-dv" hidden>
+    <p class="sub">Konwersja Dolby Vision profil 7 (remuxy UHD Blu-ray) do profilu 8.1. Obraz nie jest przekodowywany.</p>
+    <h2>Teraz</h2>
+    <div class="card pad" id="dv-job"><div class="empty">Ładowanie…</div></div>
+    <h2>Pliki w DV profil 7</h2>
+    <div class="card" id="dv-items"></div>
+    <h2>Historia</h2>
+    <div class="card" id="dv-history"></div>
+  </section>
+
+  <!-- Duplikaty -->
+  <section id="tab-dupes" hidden>
+    <p class="sub">Filmy z kilkoma wersjami. Zaznaczone są propozycje: wersje poniżej 1080p obok wersji HD oraz identyczne kopie. Zaznaczenie możesz zmienić.</p>
+    <div class="toolbar" style="margin-top:14px">
+      <label class="chk"><input type="checkbox" id="only-suggested" onchange="renderDupes()"> tylko grupy z propozycją usunięcia</label>
+    </div>
+    <div id="dupes"></div>
+    <h2>Ostatnio usunięte</h2>
+    <div class="card" id="dupes-log"></div>
+  </section>
+
+  <!-- Rozpoznanie -->
+  <section id="tab-identify" hidden>
+    <p class="sub">Przypisywanie filmom właściwego identyfikatora TMDB, gdy Jellyfin rozpoznał je źle.</p>
+    <h2>Możliwie źle rozpoznane</h2>
+    <div class="card" id="suspicious"></div>
+    <details id="unident-box">
+      <summary><h2 style="display:inline-block;margin-bottom:10px">Nierozpoznane – bez TMDB/IMDb (<span id="unident-n">0</span>)</h2></summary>
+      <div class="card" id="unidentified"></div>
+    </details>
+    <h2>Wszystkie filmy</h2>
+    <div class="toolbar"><input type="search" id="movie-q" placeholder="Szukaj po tytule albo ścieżce…" style="flex:1" oninput="renderMovies()"></div>
+    <div class="card" id="movies"></div>
+    <h2>Ostatnie poprawki</h2>
+    <div class="card" id="identify-log"></div>
+  </section>
+</main>
+
+<div class="sticky" id="dupes-bar" hidden>
+  <div>
+    <span id="dupes-sel"></span>
+    <button class="danger" id="dupes-del" onclick="deleteSelected()">Usuń zaznaczone</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const js = v => esc(JSON.stringify(v));
+const gb = b => (b / 2**30).toFixed(1) + " GB";
+const dur = s => s >= 3600 ? `${Math.floor(s/3600)} h ${Math.floor(s%3600/60)} min` : `${Math.floor(s/60)} min ${s%60} s`;
+const when = t => new Date(t * 1000).toLocaleString("pl-PL", {dateStyle: "short", timeStyle: "short"});
+const file = p => (p || "").split("/").pop();
+const count = (id, n) => { $(id).textContent = n; $(id).hidden = !n; };
+
+async function api(url, body) {
+  $("error").textContent = "";
+  const r = await fetch(url, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { $("error").textContent = data.error || "Błąd"; throw new Error(data.error); }
+  return data;
+}
+
+/* ---------- zakładki ---------- */
+let tab = "dv";
+function showTab() {
+  tab = (location.hash || "#dv").slice(1);
+  if (!["dv", "dupes", "identify"].includes(tab)) tab = "dv";
+  for (const a of document.querySelectorAll("nav a")) a.classList.toggle("active", a.dataset.tab === tab);
+  for (const t of ["dv", "dupes", "identify"]) $("tab-" + t).hidden = t !== tab;
+  updateBar();
+  load();
+}
+window.addEventListener("hashchange", showTab);
+
+async function refreshAll() {
+  await api("/api/refresh", {});
+  dupes = movies = null;
+  load(true);
+}
+
+function load(all) {
+  loadDv();
+  if (tab === "dupes" || all || !dupes) loadDupes();
+  if (tab === "identify" || all || !movies) loadMovies();
+}
+
+/* ---------- Dolby Vision ---------- */
+const DV_STATUS = {
+  trwa: () => `<span class="tag">konwersja trwa…</span>`,
+  kolejka: () => `<span class="tag meta">w kolejce</span>`,
+  podmieniony: () => `<span class="tag ok">podmieniony – czekam, aż Jellyfin odświeży</span>`,
+  brak: () => `<span class="tag err">brak pliku w /media</span>`,
+  gotowe: it => `<span class="tag ok">P8 gotowy – przetestuj na TV</span> <button class="danger small" onclick='dvReplace(${js(it.path)}, ${js(it.p8)})'>Podmień oryginał</button>`,
+  do_konwersji: it => `<button class="small" onclick='dvConvert(${js(it.path)})'>Konwertuj</button>`,
+};
+const dvConvert = path => api("/api/dv/convert", {path}).then(loadDv, () => {});
+function dvReplace(path, p8) {
+  if (confirm(`Oryginał zostanie TRWALE usunięty, a „${p8}” przejmie jego nazwę.\n\nCzy wersja P8 działa na telewizorze?`))
+    api("/api/dv/replace", {path}).then(loadDv, () => {});
+}
+
+async function loadDv() {
+  let s;
+  try { s = await api("/api/dv"); } catch { return; }
+  count("c-dv", s.items.filter(i => i.status !== "podmieniony").length);
+  const j = s.job;
+  $("dv-job").innerHTML = j
+    ? `<div class="name">${esc(file(j.path))}</div>
+       <div class="meta">${esc(j.phase)} · ${j.progress}% · trwa ${dur(j.elapsed)}${s.queue.length ? ` · w kolejce: ${s.queue.length}` : ""}</div>
+       <div class="bar"><div style="width:${j.progress}%"></div></div>
+       ${j.log.length ? `<pre>${esc(j.log.join("\n"))}</pre>` : ""}`
+    : `<div class="empty" style="padding:0">Nic się nie konwertuje. Wolne miejsce: ${s.free_gb} GB.</div>`;
+  $("dv-items").innerHTML = s.items.length
+    ? s.items.map(it => `<div class="row">
+        <div class="grow"><div class="name">${esc(it.name)}${it.year ? ` (${it.year})` : ""}</div>
+          <div class="meta">${esc(it.dv)} · ${gb(it.size)}</div>
+          <div class="path">${esc(it.path)}</div></div>
+        <div>${DV_STATUS[it.status](it)}</div></div>`).join("")
+    : `<div class="empty">Brak plików w Dolby Vision profil 7. 🎉</div>`;
+  $("dv-history").innerHTML = s.history.length
+    ? s.history.map(h => `<div class="row"><div class="grow">
+        <div class="name">${esc(file(h.path))}</div>
+        <div class="meta">${when(h.ended)}${h.status !== "podmieniony" ? ` · ${dur(Math.round(h.ended - h.started))}` : ""} · ${esc(h.msg)}</div></div>
+        <span class="tag ${h.status === "błąd" ? "err" : "ok"}">${esc(h.status)}</span></div>`).join("")
+    : `<div class="empty">Jeszcze nic.</div>`;
+}
+
+/* ---------- Duplikaty ---------- */
+let dupes = null;
+const selected = new Set();
+
+async function loadDupes() {
+  try { dupes = await api("/api/dupes"); } catch { return; }
+  const ids = new Set(dupes.groups.flatMap(g => g.versions.map(v => v.id)));
+  // Domyślnie zaznacz propozycje; zachowaj wybór użytkownika między odświeżeniami
+  if (!loadDupes.done) dupes.groups.forEach(g => g.versions.forEach(v => v.suggest && selected.add(v.id)));
+  for (const id of [...selected]) if (!ids.has(id)) selected.delete(id);
+  loadDupes.done = true;
+  count("c-dupes", dupes.groups.filter(g => g.versions.some(v => v.suggest)).length);
+  renderDupes();
+}
+
+function toggle(id, on) { on ? selected.add(id) : selected.delete(id); renderDupes(); }
+
+function renderDupes() {
+  if (!dupes) return;
+  const only = $("only-suggested").checked;
+  const groups = dupes.groups.filter(g => !only || g.versions.some(v => v.suggest));
+  $("dupes").innerHTML = groups.length ? groups.map(g => {
+    const all = g.versions.every(v => selected.has(v.id));
+    const warn = [];
+    if (g.runtime_mismatch) warn.push(`Wersje mają różną długość – to mogą być różne wersje filmu (np. reżyserska) albo źle rozpoznany film. <a href="#identify" onclick='openFix(${js(g.versions[0].item_id)})'>Sprawdź rozpoznanie</a>`);
+    if (all) warn.push("Zaznaczone są wszystkie wersje – jedna musi zostać.");
+    if (!g.has_hd) warn.push("Brak wersji 1080p+ w tej grupie.");
+    return `<div class="card">
+      <div class="ghdr"><div class="name">${esc(g.name)}${g.year ? ` (${g.year})` : ""}</div>
+        ${g.tmdb ? `<a class="meta" href="https://www.themoviedb.org/movie/${esc(g.tmdb)}" target="_blank" rel="noopener">TMDB ${esc(g.tmdb)}</a>` : ""}</div>
+      ${warn.map(w => `<div class="warnbox">${w}</div>`).join("")}
+      ${g.versions.map(v => `<div class="row"><label class="chk grow">
+          <input type="checkbox" ${selected.has(v.id) ? "checked" : ""} ${v.merged ? "disabled" : ""} onchange='toggle(${js(v.id)}, this.checked)'>
+          <span><span class="badge b-${esc(v.tier)}">${esc(v.tier)}</span>
+            <span class="meta">${v.width}×${v.height} · ${v.minutes} min · ${gb(v.size)}</span>
+            ${v.identical ? `<span class="flag">identyczna kopia</span>` : ""}
+            ${v.alone ? `<span class="flag">usunie cały folder</span>` : ""}
+            ${v.merged ? `<span class="flag">wersja scalona – usuń ręcznie</span>` : ""}
+            <div class="path">${esc(v.path)}</div></span></label></div>`).join("")}
+    </div>`;
+  }).join("") : `<div class="card"><div class="empty">Brak duplikatów. 🎉</div></div>`;
+  $("dupes-log").innerHTML = dupes.log.length
+    ? dupes.log.map(e => `<div class="row"><div class="grow"><div class="name">${esc(file(e.path))}</div>
+        <div class="meta">${when(e.t)} · ${esc(e.msg)}</div></div></div>`).join("")
+    : `<div class="empty">Jeszcze nic.</div>`;
+  updateBar();
+}
+
+function selectedVersions() {
+  return dupes ? dupes.groups.flatMap(g => g.versions).filter(v => selected.has(v.id)) : [];
+}
+
+function updateBar() {
+  const sel = selectedVersions();
+  $("dupes-bar").hidden = tab !== "dupes" || !sel.length;
+  $("dupes-sel").textContent = `Zaznaczono: ${sel.length} ${sel.length === 1 ? "plik" : sel.length < 5 ? "pliki" : "plików"}, ${gb(sel.reduce((a, v) => a + v.size, 0))}`;
+}
+
+async function deleteSelected() {
+  const sel = selectedVersions();
+  const list = sel.map(v => `• ${file(v.path)}${v.alone ? "  (z całym folderem)" : ""}`).join("\n");
+  if (!confirm(`Usunąć TRWALE ${sel.length} plik(ów), ${gb(sel.reduce((a, v) => a + v.size, 0))}?\nPliki nie trafią do kosza.\n\n${list}`)) return;
+  $("dupes-del").disabled = true;
+  try {
+    const r = await api("/api/dupes/delete", {ids: sel.map(v => v.id)});
+    const failed = r.done.filter(d => !d.ok);
+    if (failed.length) $("error").textContent = "Nie udało się usunąć: " + failed.map(d => file(d.path)).join(", ");
+    sel.forEach(v => selected.delete(v.id));
+  } catch {}
+  $("dupes-del").disabled = false;
+  loadDupes();
+}
+
+/* ---------- Rozpoznanie ---------- */
+let movies = null, fixOpen = null, fixResults = null, fixShown = false;
+
+async function loadMovies() {
+  try { movies = await api("/api/movies"); } catch { return; }
+  count("c-identify", movies.movies.filter(m => m.reasons.length).length);
+  renderMovies();
+}
+
+function movieRow(m) {
+  const ids = [m.tmdb && `<a href="https://www.themoviedb.org/movie/${esc(m.tmdb)}" target="_blank" rel="noopener">TMDB ${esc(m.tmdb)}</a>`,
+               m.imdb && `<a href="https://www.imdb.com/title/${esc(m.imdb)}/" target="_blank" rel="noopener">IMDb</a>`].filter(Boolean).join(" · ");
+  return `<div class="row"><div class="grow">
+      <div class="name">${esc(m.name)}${m.year ? ` (${m.year})` : ""}</div>
+      <div class="meta">${m.minutes ? m.minutes + " min · " : ""}${ids || "brak identyfikatora"}</div>
+      ${m.reasons.map(r => `<div class="warn meta">⚠ ${esc(r)}</div>`).join("")}
+      <div class="path">${esc(m.path)}</div></div>
+      <button class="ghost small" onclick='openFix(${js(m.item_id)})'>${fixOpen === m.item_id ? "Zamknij" : "Popraw"}</button></div>
+    ${fixOpen === m.item_id && !fixShown && (fixShown = true) ? fixPanel(m) : ""}`;
+}
+
+function fixPanel(m) {
+  const guess = (file(m.path).replace(/\.[^.]+$/, "").split(/[ ._]+(?:19|20)\d\d(?:[ ._]|$)/)[0] || m.name).replace(/[._]+/g, " ");
+  const year = (file(m.path).match(/(?<!\d)(19[2-9]\d|20[0-3]\d)(?!\d)/) || [])[1] || "";
+  return `<div class="fix">
+    <div class="toolbar">
+      <input type="text" id="fix-name" value="${esc(guess)}" placeholder="Tytuł" style="flex:1 1 220px">
+      <input type="number" id="fix-year" value="${esc(year)}" placeholder="Rok" style="width:90px">
+      <button class="small" onclick='fixSearch(${js(m.item_id)})'>Szukaj w TMDB</button>
+    </div>
+    <div class="toolbar">
+      <input type="number" id="fix-tmdb" placeholder="albo ID z TMDB" style="width:170px">
+      <button class="ghost small" onclick='fixSearch(${js(m.item_id)}, true)'>Pokaż</button>
+      <span class="meta">Podpowiedź z nazwy pliku. ID jest w adresie filmu na themoviedb.org.</span>
+    </div>
+    <div id="fix-results">${fixResults ? renderResults(m.item_id) : ""}</div></div>`;
+}
+
+function renderResults(itemId) {
+  if (!fixResults.length) return `<div class="empty">Nic nie znaleziono.</div>`;
+  return fixResults.map(r => `<div class="result">
+      ${r.image ? `<img src="${esc(r.image)}" alt="" loading="lazy">` : `<img alt="">`}
+      <div class="grow"><div class="name">${esc(r.name)}${r.year ? ` (${r.year})` : ""}</div>
+        <div class="meta">${r.tmdb ? `<a href="https://www.themoviedb.org/movie/${esc(r.tmdb)}" target="_blank" rel="noopener">TMDB ${esc(r.tmdb)}</a>` : ""}</div>
+        <div class="ov">${esc(r.overview)}</div></div>
+      ${r.tmdb ? `<button class="small" onclick='fixApply(${js(itemId)}, ${js(r.tmdb)}, ${js(r.name + (r.year ? " (" + r.year + ")" : ""))})'>Przypisz</button>` : ""}
+    </div>`).join("");
+}
+
+function openFix(itemId) {
+  fixOpen = fixOpen === itemId ? null : itemId;
+  fixResults = null;
+  if (location.hash !== "#identify") location.hash = "#identify";
+  renderMovies();
+}
+
+async function fixSearch(itemId, byId) {
+  const body = byId ? {item_id: itemId, tmdb: $("fix-tmdb").value.trim()}
+                    : {item_id: itemId, name: $("fix-name").value.trim(), year: parseInt($("fix-year").value) || null};
+  $("fix-results").innerHTML = `<div class="empty">Szukam…</div>`;
+  try { fixResults = (await api("/api/identify/search", body)).results; } catch { fixResults = null; }
+  $("fix-results").innerHTML = fixResults ? renderResults(itemId) : "";
+}
+
+async function fixApply(itemId, tmdb, label) {
+  if (!confirm(`Przypisać ten plik do „${label}”?\nJellyfin pobierze nowe metadane i okładki.`)) return;
+  try { await api("/api/identify/apply", {item_id: itemId, tmdb}); } catch { return; }
+  fixOpen = fixResults = null;
+  setTimeout(() => { loadMovies(); loadDupes(); }, 1500);
+}
+
+function renderMovies() {
+  if (!movies) return;
+  fixShown = false;
+  const sus = movies.movies.filter(m => m.reasons.length);
+  $("suspicious").innerHTML = sus.length ? sus.map(movieRow).join("") : `<div class="empty">Nic podejrzanego. 🎉</div>`;
+  const unident = movies.movies.filter(m => m.unidentified && !m.reasons.length);
+  $("unident-n").textContent = unident.length;
+  $("unidentified").innerHTML = unident.length ? unident.map(movieRow).join("") : `<div class="empty">Wszystkie filmy mają identyfikator. 🎉</div>`;
+  if (unident.some(m => m.item_id === fixOpen)) $("unident-box").open = true;
+  const q = $("movie-q").value.trim().toLowerCase();
+  const list = q ? movies.movies.filter(m => (m.name + " " + m.path).toLowerCase().includes(q)) : [];
+  $("movies").innerHTML = !q ? `<div class="empty">Wpisz tytuł, żeby wyszukać film (${movies.movies.length} w bibliotece).</div>`
+    : list.length ? list.slice(0, 50).map(movieRow).join("") + (list.length > 50 ? `<div class="empty">…i ${list.length - 50} więcej, zawęź wyszukiwanie.</div>` : "")
+    : `<div class="empty">Nic nie pasuje.</div>`;
+  if (fixOpen && fixResults) { const el = $("fix-results"); if (el) el.innerHTML = renderResults(fixOpen); }
+  $("identify-log").innerHTML = movies.log.length
+    ? movies.log.map(e => `<div class="row"><div class="grow"><div class="name">${esc(file(e.path))}</div>
+        <div class="meta">${when(e.t)} · ${esc(e.msg)}</div></div></div>`).join("")
+    : `<div class="empty">Jeszcze nic.</div>`;
+}
+
+showTab();
+setInterval(() => { if (tab === "dv") loadDv(); }, 3000);
+</script>
+</body>
+</html>
