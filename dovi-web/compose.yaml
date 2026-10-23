@@ -1,0 +1,15 @@
+services:
+  dovi-web:
+    build: .
+    image: dovi-web
+    container_name: dovi-web
+    restart: unless-stopped
+    ports:
+      - "8097:8080"
+    env_file: .env
+    environment:
+      TZ: Europe/Warsaw
+    volumes:
+      # Ta sama biblioteka co w Jellyfin, pod ta sama sciezka (/media) - MEDIA_DIR w .env
+      - ${MEDIA_DIR:?Ustaw MEDIA_DIR w .env}:/media
+      - ./data:/data

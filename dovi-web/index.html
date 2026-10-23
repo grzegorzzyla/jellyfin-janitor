@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Konwersja DV</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#6b7280; --line:#e3e6eb; --accent:#4f46e5; --ok:#15803d; --err:#b91c1c; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111318; --card:#1a1d24; --fg:#e7e9ee; --muted:#9aa1ad; --line:#2a2f39; --accent:#818cf8; --ok:#4ade80; --err:#f87171; --warn:#fbbf24; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1000px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 28px 0 10px; }
+  .sub { color: var(--muted); margin: 0 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .row { display:flex; gap:12px; align-items:center; justify-content:space-between; padding: 12px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .row:first-child { border-top: 0; }
+  .name { font-weight: 600; }
+  .path { color: var(--muted); font-size: 12.5px; word-break: break-all; }
+  .meta { color: var(--muted); font-size: 13px; }
+  button { font: inherit; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 7px; padding: 6px 14px; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--accent); }
+  button.danger { background: var(--err); border-color: var(--err); }
+  button:disabled { opacity: .5; cursor: default; }
+  .tag { font-size: 13px; font-weight: 600; }
+  .ok { color: var(--ok); } .err { color: var(--err); } .warn { color: var(--warn); }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin: 10px 0 6px; }
+  .bar > div { height: 100%; background: var(--accent); transition: width .5s; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; font-size: 12px; overflow-x: auto; margin: 8px 0 0; white-space: pre-wrap; word-break: break-all; }
+  .empty { color: var(--muted); padding: 6px 0; }
+  .top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+  #error { color: var(--err); margin-top: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div>
+      <h1>Konwersja Dolby Vision 7 → 8.1</h1>
+      <p class="sub">Filmy z Jellyfin w DV profil 7 (remuxy UHD BluRay). Obraz nie jest przekodowywany.</p>
+    </div>
+    <button class="ghost" onclick="post('/api/refresh')">Odśwież listę z Jellyfin</button>
+  </div>
+  <div id="error"></div>
+
+  <h2>Teraz</h2>
+  <div class="card" id="job"><div class="empty">Ładowanie…</div></div>
+
+  <h2>Pliki w DV profil 7</h2>
+  <div class="card" id="items"></div>
+
+  <h2>Historia</h2>
+  <div class="card" id="history"></div>
+</main>
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const gb = b => (b / 2**30).toFixed(1) + " GB";
+const mins = s => s >= 3600 ? `${Math.floor(s/3600)} h ${Math.floor(s%3600/60)} min` : `${Math.floor(s/60)} min ${s%60} s`;
+const when = t => new Date(t * 1000).toLocaleString("pl-PL", {dateStyle: "short", timeStyle: "short"});
+
+async function post(url, path) {
+  document.getElementById("error").textContent = "";
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({path})});
+  if (!r.ok) document.getElementById("error").textContent = (await r.json()).error || "Błąd";
+  load();
+}
+
+function convert(path) { post("/api/convert", path); }
+function replaceOrig(path, p8) {
+  if (confirm(`Oryginał zostanie TRWALE usunięty, a „${p8}” przejmie jego nazwę.\n\nCzy wersja P8 działa na telewizorze?`))
+    post("/api/replace", path);
+}
+
+const STATUS = {
+  trwa: () => `<span class="tag">konwersja trwa…</span>`,
+  kolejka: () => `<span class="tag meta">w kolejce</span>`,
+  podmieniony: () => `<span class="tag ok">podmieniony – czekam, aż Jellyfin odświeży</span>`,
+  brak: () => `<span class="tag err">brak pliku w /media</span>`,
+  gotowe: it => `<span class="tag ok">P8 gotowy – przetestuj na TV</span> <button class="danger" onclick='replaceOrig(${esc(JSON.stringify(it.path))}, ${esc(JSON.stringify(it.p8))})'>Podmień oryginał</button>`,
+  do_konwersji: it => `<button onclick='convert(${esc(JSON.stringify(it.path))})'>Konwertuj</button>`,
+};
+
+function render(s) {
+  const j = s.job;
+  document.getElementById("job").innerHTML = j
+    ? `<div class="name">${esc(j.path.split("/").pop())}</div>
+       <div class="meta">${esc(j.phase)} · ${j.progress}% · trwa ${mins(j.elapsed)}${s.queue.length ? ` · w kolejce: ${s.queue.length}` : ""}</div>
+       <div class="bar"><div style="width:${j.progress}%"></div></div>
+       ${j.log.length ? `<pre>${esc(j.log.join("\n"))}</pre>` : ""}`
+    : `<div class="empty">Nic się nie konwertuje. Wolne miejsce: ${s.free_gb} GB.</div>`;
+
+  document.getElementById("items").innerHTML = s.items.length
+    ? s.items.map(it => `<div class="row">
+        <div><div class="name">${esc(it.name)}${it.year ? ` (${it.year})` : ""}</div>
+          <div class="meta">${esc(it.dv)} · ${gb(it.size)}</div>
+          <div class="path">${esc(it.path)}</div></div>
+        <div>${STATUS[it.status](it)}</div></div>`).join("")
+    : `<div class="empty">Brak plików w Dolby Vision profil 7. 🎉</div>`;
+
+  document.getElementById("history").innerHTML = s.history.length
+    ? s.history.map(h => `<div class="row"><div>
+        <div class="name">${esc(h.path.split("/").pop())}</div>
+        <div class="meta">${when(h.ended)}${h.status !== "podmieniony" ? ` · ${mins(Math.round(h.ended - h.started))}` : ""} · ${esc(h.msg)}</div></div>
+        <span class="tag ${h.status === "błąd" ? "err" : "ok"}">${esc(h.status)}</span></div>`).join("")
+    : `<div class="empty">Jeszcze nic.</div>`;
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/state");
+    const s = await r.json();
+    if (!r.ok) throw new Error(s.error);
+    render(s);
+  } catch (e) {
+    document.getElementById("error").textContent = "Nie mogę pobrać stanu: " + e.message;
+  }
+}
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>

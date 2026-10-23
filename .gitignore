@@ -1,0 +1,11 @@
+# Sekrety i lokalne dane
+config.json
+dovi-web/.env
+dovi-web/data/
+historia/
+NOTATKI.md
+*.json.bak
+do_usuniecia*.json
+
+__pycache__/
+.DS_Store
